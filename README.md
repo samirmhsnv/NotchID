@@ -129,6 +129,10 @@ To make a release, run `./build.sh --release` and attach `build/NotchID.zip` to 
 gh release create v1.0.0 build/NotchID.zip --title "NotchID 1.0.0" --generate-notes
 ```
 
+The decisions behind a scan (two matching frames in a row, the blink, eye openness, the enrolment
+threshold and what setup is missing) live in `Sources/NotchIDCore` and have tests. Run them with
+`./test.sh`, which also works with only the Command Line Tools installed.
+
 To regenerate the README screenshots:
 
 ```bash

@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreImage
+import NotchIDCore
 import Vision
 
 /// One analysed camera frame.
@@ -31,7 +32,7 @@ final class FaceEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, 
     private var handler: ((CVPixelBuffer) -> Void)?
     private var tick = 0
 
-    static let eyesOpenThreshold = 0.16
+    static let eyesOpenThreshold = EyeOpenness.closedAtOrBelow
 
     // MARK: Permissions / lifecycle
 
@@ -161,10 +162,8 @@ final class FaceEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, 
     }
 
     private static func openness(_ region: VNFaceLandmarkRegion2D?) -> Double {
-        guard let pts = region?.normalizedPoints, pts.count > 2 else { return 1 }
-        let xs = pts.map(\.x), ys = pts.map(\.y)
-        let w = (xs.max()! - xs.min()!), h = (ys.max()! - ys.min()!)
-        return w > 0 ? Double(h / w) : 1
+        let pts = region?.normalizedPoints ?? []
+        return EyeOpenness.ratio(xs: pts.map { Double($0.x) }, ys: pts.map { Double($0.y) })
     }
 
     static func distance(_ a: VNFeaturePrintObservation, _ b: VNFeaturePrintObservation) -> Float {
@@ -180,8 +179,9 @@ final class FaceEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, 
     func verify(prints: [VNFeaturePrintObservation], threshold: Float, requireBlink: Bool,
                 timeout: TimeInterval, onUpdate: ((VerifyUpdate) -> Void)? = nil) async -> VerifyResult {
         final class State { var done = false; var cont: CheckedContinuation<VerifyResult, Never>?
-            var hits = 0; var sawFace = false; var sawClosed = false }
-        let st = State()
+            var match: MatchState
+            init(_ match: MatchState) { self.match = match } }
+        let st = State(MatchState(threshold: threshold, requireBlink: requireBlink))
         let finish: (VerifyResult) -> Void = { r in // on queue
             guard !st.done else { return }
             st.done = true
@@ -196,20 +196,19 @@ final class FaceEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, 
                     st.cont = cont
                     guard self.configureIfNeeded(), !prints.isEmpty else { finish(.noFace); return }
                     self.handler = { pb in
-                        guard let s = self.analyze(pb) else { st.hits = 0; onUpdate?(.noFace); return }
-                        st.sawFace = true
+                        guard let s = self.analyze(pb) else {
+                            _ = st.match.observe(.noFace); onUpdate?(.noFace); return
+                        }
                         if s.eyeOpenness <= Self.eyesOpenThreshold {
-                            st.sawClosed = true; st.hits = 0; onUpdate?(.eyesClosed); return
+                            _ = st.match.observe(.eyesClosed); onUpdate?(.eyesClosed); return
                         }
                         let d = prints.map { Self.distance(s.print, $0) }.min() ?? .infinity
                         onUpdate?(.distance(d))
-                        guard d < threshold else { st.hits = 0; return }
-                        st.hits += 1
-                        if st.hits >= 2 && (!requireBlink || st.sawClosed) { finish(.matched) }
+                        if st.match.observe(.distance(d)) { finish(.matched) }
                     }
                     if !self.session.isRunning { self.session.startRunning() }
                     self.queue.asyncAfter(deadline: .now() + timeout) {
-                        finish(st.sawFace ? .noMatch : .noFace)
+                        finish(st.match.sawFace ? .noMatch : .noFace)
                     }
                 }
             }

@@ -1,4 +1,5 @@
 import AppKit
+import NotchIDCore
 
 /// Watches the macOS lock screen. When the Mac is locked and the display is awake, it scans for the
 /// enrolled face and, on a match, unlocks the real lock screen by typing the Keychain-stored password.
@@ -23,29 +24,13 @@ final class UnlockAgent {
     private var skippedThisLock: Readiness?
     private var toldThisLock = false
 
-    enum Readiness {
-        case ready, notEnrolled, noPassword, noCamera, noAccessibility, disabled
-
-        /// What is missing, for the notch and the menu; nil when there is nothing to fix.
-        var notice: String? {
-            switch self {
-            case .ready, .disabled: return nil
-            case .notEnrolled: return "Set up Face ID in NotchID"
-            case .noPassword: return "Save your Mac password in NotchID"
-            case .noCamera: return "Allow the camera for NotchID"
-            case .noAccessibility: return "Allow Accessibility for NotchID"
-            }
-        }
-    }
+    typealias Readiness = NotchIDCore.Readiness
 
     var readiness: Readiness {
         let store = Store.shared
-        if !store.unlockEnabled { return .disabled }
-        if !store.isEnrolled { return .notEnrolled }
-        if store.cachedPassword == nil { return .noPassword }
-        if !FaceEngine.cameraAuthorized { return .noCamera }
-        if !Accessibility.granted { return .noAccessibility }
-        return .ready
+        return .evaluate(enabled: store.unlockEnabled, enrolled: store.isEnrolled,
+                         hasPassword: store.cachedPassword != nil,
+                         cameraAuthorized: FaceEngine.cameraAuthorized, accessibilityGranted: Accessibility.granted)
     }
 
     func start() {
@@ -195,5 +180,18 @@ final class UnlockAgent {
             Log.info(self.locked ? "still locked after typing password" : "unlocked ✓")
             return !self.locked
         }, replayAfterUnlock: !SkyLight.worksOnLockScreen)
+    }
+}
+
+extension UnlockAgent.Readiness {
+    /// What is missing, for the notch and the menu; nil when there is nothing to fix.
+    var notice: String? {
+        switch self {
+        case .ready, .disabled: return nil
+        case .notEnrolled: return "Set up Face ID in NotchID"
+        case .noPassword: return "Save your Mac password in NotchID"
+        case .noCamera: return "Allow the camera for NotchID"
+        case .noAccessibility: return "Allow Accessibility for NotchID"
+        }
     }
 }

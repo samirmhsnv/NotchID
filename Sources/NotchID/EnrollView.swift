@@ -1,4 +1,5 @@
 import AVFoundation
+import NotchIDCore
 import SwiftUI
 import Vision
 
@@ -128,9 +129,7 @@ final class EnrollModel: ObservableObject {
         for i in frontal.indices { for j in frontal.indices where j > i {
             dists.append(FaceEngine.distance(frontal[i], frontal[j]))
         } }
-        dists.sort()
-        let p90 = dists.isEmpty ? 0.25 : dists[Int(Double(dists.count - 1) * 0.9)]
-        let threshold = min(max(Double(p90) * 1.6, 0.3), 0.7)
+        let threshold = Calibration.threshold(pairwiseDistances: dists)
         Store.shared.saveEnrollment(prints: frontal + angled, threshold: threshold, avatar: best?.img)
     }
 }
